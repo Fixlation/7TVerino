@@ -1,0 +1,34 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+dist-hosted
+release-builds
+*.local
+package-lock.json
+7tv.zip
+
+# Editor directories and files
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Manifest.json is generated from manifest.config.json
+src/manifest.json
+msg_types.json
+
+crx/*
+script/*.json
+

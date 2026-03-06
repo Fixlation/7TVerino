@@ -1,0 +1,101 @@
+<template>
+	<template v-for="({ parent, component, props, condition }, i) of tButtons.values()" :key="i">
+		<Teleport v-if="parent.current && (typeof condition !== 'function' || condition())" :to="parent.current">
+			<Component :is="component" v-bind="props" />
+		</Teleport>
+	</template>
+</template>
+
+<script setup lang="ts">
+import { markRaw, reactive, ref } from "vue";
+import { REACT_TYPEOF_TOKEN } from "@/common/Constant";
+import { REACT_ELEMENT_SYMBOL, useComponentHook } from "@/common/ReactHooks";
+import { declareModule } from "@/composable/useModule";
+
+const { markAsReady } = declareModule("chat-input-controller", {
+	name: "Controller: Chat Input",
+	depends_on: ["chat"],
+});
+
+// Button renderer
+const tButtons = reactive(new Map<string, InsertedButton<ComponentFactory>>());
+useComponentHook<Twitch.ChatInputControllerComponent>(
+	{
+		parentSelector: ".chat-input",
+		predicate: (n) => {
+			return n.handleGlobalMousedown && n.props && n.props.children && n.props.onClickOut;
+		},
+	},
+	{
+		hooks: {
+			render(inst, cur) {
+				if (!inst.component.container || !inst.component.container.parentElement) return cur;
+				if (!inst.component.container.parentElement.classList.contains("chat-input")) return cur;
+
+				const props = (cur as ReactExtended.ReactRuntimeElement).props ?? {};
+				const child = (props.children as ReactExtended.ReactRuntimeElement[]).find(
+					(c) => c.props.className === "chat-input__buttons-container",
+				);
+				if (!child) return cur;
+
+				const buttons = child.props.children.at(-1);
+				if (!buttons) return cur;
+
+				for (const btn of tButtons.values()) {
+					buttons.props.children.splice(buttons.props.children.length - btn.offset, 0, {
+						[REACT_TYPEOF_TOKEN]: REACT_ELEMENT_SYMBOL,
+						key: null,
+						ref: btn.parent,
+						type: "seventv-chat-input-button-container",
+						props: {},
+					});
+				}
+
+				return cur;
+			},
+		},
+	},
+);
+
+/**
+ * Add a button under the chat input, with a given offset
+ *
+ * @param offset value begins from the end
+ */
+function addButton<T extends ComponentFactory>(
+	key: string,
+	com: T,
+	props: InstanceType<T>["$props"],
+	offset: number,
+	condition?: () => boolean,
+) {
+	const track = ref({ current: null as HTMLElement | null });
+
+	if (tButtons)
+		tButtons.set(key, {
+			key,
+			offset,
+			parent: track.value,
+			component: markRaw(com),
+			props,
+			condition: condition ?? (() => true),
+		});
+
+	return track;
+}
+
+interface InsertedButton<T extends ComponentFactory> {
+	key: string;
+	offset: number;
+	parent: { current: Element | null };
+	component: InstanceType<T>;
+	props: InstanceType<T>["props"];
+	condition?: () => boolean;
+}
+
+defineExpose({
+	addButton,
+});
+
+markAsReady();
+</script>

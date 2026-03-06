@@ -1,0 +1,186 @@
+import type {
+	AnyToken,
+	ChatMessage,
+	ChatUser,
+	EmoteToken,
+	LinkToken,
+	MentionToken,
+	VoidToken,
+} from "@/common/chat/ChatMessage";
+import { Regex } from "@/site/twitch.tv";
+import { SEVENTV_EMOTE_LINK } from "../Constant";
+import { parse as tldParse } from "tldts";
+
+const URL_PROTOCOL_REGEXP = /^https?:\/\/|\.$/i;
+const LIKELY_LINK_CHAR_REGEXP = /[:./]/;
+const LEADING_LINK_PUNCTUATION_REGEXP = /^[([{<"'`]+/;
+const TRAILING_LINK_PUNCTUATION_REGEXP = /[)\]}>,"'!?;:]+$/;
+
+const backwardModifierBlacklist = new Set(["w!", "h!", "v!"]);
+
+export class Tokenizer {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	constructor(private msg: ChatMessage<any>) {}
+
+	tokenize(opt: TokenizeOptions) {
+		const tokens = [] as AnyToken[];
+
+		const textParts = this.msg.body.split(" ");
+		const chatterMap = opt.chatterMap;
+		const emoteMap = opt.emoteMap;
+		const localEmoteMap = opt.localEmoteMap;
+		const getEmote = (name: string) => {
+			if (localEmoteMap?.[name] && Object.hasOwn(localEmoteMap, name)) {
+				return localEmoteMap[name];
+			}
+
+			if (emoteMap[name] && Object.hasOwn(emoteMap, name)) {
+				return emoteMap[name];
+			}
+		};
+		const showModifiers = opt.showModifiers;
+
+		let cursor = -1;
+		let lastEmoteToken: EmoteToken | undefined = undefined;
+		let parsedUrl: URL | null = null;
+		let emoteID: string | null = null;
+
+		const toVoid = (start: number, end: number) =>
+			({
+				kind: "VOID",
+				range: [start, end],
+				content: void 0,
+			}) as VoidToken;
+
+		for (let index = 0; index < textParts.length; index++) {
+			const part = textParts[index];
+			if (part === undefined) continue;
+
+			const next = cursor + (part.length + 1);
+			const partLower = part.toLowerCase();
+
+			// tokenize emote?
+			const maybeEmote = getEmote(part);
+			const nextEmote = index + 1 < textParts.length ? getEmote(textParts[index + 1] ?? "") : undefined;
+			const prevEmote = index > 0 ? getEmote(textParts[index - 1] ?? "") : undefined;
+			const maybeMention = chatterMap[partLower] && Object.hasOwn(chatterMap, partLower);
+
+			if (maybeEmote) {
+				// handle zero width overlaying
+				if ((maybeEmote.data?.flags ?? 0) & 256 && lastEmoteToken) {
+					lastEmoteToken.content.overlaid[maybeEmote.name] = maybeEmote;
+
+					// the "void" token is used to hide the text of the zero-width. any text in the void range won't be rendered
+					tokens.push(toVoid(cursor + 1, next - 1));
+				} else {
+					// regular emote
+					tokens.push(
+						(lastEmoteToken = {
+							kind: "EMOTE",
+							range: [cursor + 1, next - 1],
+							content: {
+								emote: maybeEmote,
+								overlaid: {},
+								...(maybeEmote.isTwitchCheer
+									? {
+											cheerAmount: maybeEmote.isTwitchCheer.amount,
+											cheerColor: maybeEmote.isTwitchCheer.color,
+									  }
+									: {}),
+							} as EmoteToken["content"],
+						}),
+					);
+				}
+			} else if (!showModifiers && nextEmote && backwardModifierBlacklist.has(part)) {
+				// this is a temporary measure to hide bttv emote modifiers
+				tokens.push(toVoid(cursor, next - 1));
+			} else if (!showModifiers && prevEmote && part.startsWith("ffz") && part.length > 3) {
+				// this is a temporary measure to hide ffz emote modifiers
+				tokens.push(toVoid(cursor, next - 1));
+			} else if ((parsedUrl = this.isValidLink(part))) {
+				tokens.push({
+					kind: "LINK",
+					range: [cursor + 1, next - 1],
+					content: {
+						displayText: part,
+						url: parsedUrl.toString(),
+					},
+				} as LinkToken);
+				// Check if the link is a 7TV emote link
+				if ((emoteID = this.isSeventvEmoteLink(parsedUrl.href))) {
+					this.msg.emoteLinkEmbed = emoteID;
+				}
+			} else if (Regex.Mention.test(part) || maybeMention) {
+				//  Check mention
+				const commaAt = part.indexOf(",");
+				const mentionEnd = commaAt > 0 ? commaAt : part.length;
+				const username = (part.charAt(0) === "@" ? part.slice(1, mentionEnd) : part).toLowerCase();
+				const user = chatterMap[username];
+
+				tokens.push({
+					kind: "MENTION",
+					range: [cursor + 1, cursor + mentionEnd],
+					content: {
+						displayText: part.slice(0, mentionEnd),
+						recipient: username,
+						user,
+					} as MentionToken["content"],
+				});
+
+				this.msg.mentions.add(username);
+			}
+
+			cursor = next;
+			if (!maybeEmote && !!part) lastEmoteToken = undefined;
+		}
+
+		tokens.sort((a, b) => a.range[0] - b.range[0]);
+
+		return (this.msg.tokens = tokens);
+	}
+
+	private isValidLink(message: string): URL | null {
+		const normalized = this.normalizeLinkCandidate(message);
+		if (!normalized) return null;
+
+		try {
+			const url = new URL(`https://${normalized.replace(URL_PROTOCOL_REGEXP, "")}`);
+			const { isIcann, domain } = tldParse(url.hostname);
+
+			if (domain && isIcann) {
+				return url;
+			}
+		} catch (e) {
+			void 0;
+		}
+
+		return null;
+	}
+
+	private normalizeLinkCandidate(message: string): string | null {
+		if (!message || message.length < 4) return null;
+		if (!LIKELY_LINK_CHAR_REGEXP.test(message) && !message.startsWith("www")) return null;
+
+		const trimmed = message
+			.replace(LEADING_LINK_PUNCTUATION_REGEXP, "")
+			.replace(TRAILING_LINK_PUNCTUATION_REGEXP, "");
+		if (!trimmed || trimmed.length < 4) return null;
+		if (!trimmed.includes(".") && !trimmed.includes("://") && !trimmed.startsWith("www")) return null;
+
+		return trimmed;
+	}
+
+	private isSeventvEmoteLink(u: string): string | null {
+		const match = u.match(SEVENTV_EMOTE_LINK);
+		return match?.groups!.emoteID ?? null;
+	}
+}
+
+export interface TokenizeOptions {
+	chatterMap: Record<string, ChatUser>;
+	emoteMap: Record<string, SevenTV.ActiveEmote>;
+	localEmoteMap?: Record<string, SevenTV.ActiveEmote>;
+	filteredWords?: string[];
+	actorUsername?: string;
+	showModifiers?: boolean;
+}
