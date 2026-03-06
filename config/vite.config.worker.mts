@@ -1,9 +1,5 @@
-import { displayName as name } from "./package.json";
-import { getFullVersion } from "./vite.utils";
-import path from "path";
+import { appName, getFullVersion, r } from "./vite.utils";
 import { defineConfig, loadEnv } from "vite";
-
-const r = (...args: string[]) => path.resolve(__dirname, ...args);
 
 export default defineConfig(() => {
 	const mode = process.env.NODE_ENV;
@@ -14,7 +10,7 @@ export default defineConfig(() => {
 	process.env = {
 		...process.env,
 		...loadEnv(mode, process.cwd()),
-		VITE_APP_NAME: name,
+		VITE_APP_NAME: appName,
 		VITE_APP_VERSION: fullVersion,
 		VITE_APP_VERSION_BRANCH: process.env.BRANCH || "",
 	};
@@ -25,13 +21,13 @@ export default defineConfig(() => {
 		mode,
 		resolve: {
 			alias: {
-				"@": path.resolve(__dirname, "src"),
+				"@": r("src"),
 			},
 		},
 
-		root: ".",
+		root: r("."),
 		build: {
-			outDir: "dist" + "/" + outDir,
+			outDir: r("dist", outDir),
 			emptyOutDir: false,
 			write: true,
 			rollupOptions: {

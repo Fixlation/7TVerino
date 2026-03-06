@@ -13,10 +13,10 @@ If you just want to install the extension, do not download the source code zip f
 
 Use the latest build from the Releases page instead:
 
-- Open [Releases](https://github.com/Fickslayshun/seventvfixed/releases)
-- Open the newest release
-- Under `Assets`, download the `7TVFixed-...zip` file
-- Extract it somewhere you want to keep it
+-   Open [Releases](https://github.com/Fickslayshun/seventvfixed/releases)
+-   Open the newest release
+-   Under `Assets`, download the `7TVFixed-...zip` file
+-   Extract it somewhere you want to keep it
 
 ## Install
 
@@ -47,6 +47,6 @@ That creates a release zip in `release-builds/`.
 
 ## Notes
 
-- This is an unofficial fork of the official 7TV extension.
-- The official upstream project lives at [SevenTV/Extension](https://github.com/SevenTV/Extension).
-- This fork is intended to provide an alternative build and distribution path, not to represent the official project.
+-   This is an unofficial fork of the official 7TV extension.
+-   The official upstream project lives at [SevenTV/Extension](https://github.com/SevenTV/Extension).
+-   This fork is intended to provide an alternative build and distribution path, not to represent the official project.

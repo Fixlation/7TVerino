@@ -19,12 +19,12 @@ export default defineConfig(() => {
 		mode,
 		resolve: {
 			alias: {
-				"@": path.resolve(__dirname, "src"),
+				"@": r("src"),
 			},
 		},
 		build: {
 			emptyOutDir: false,
-			outDir: "dist" + "/" + outDir,
+			outDir: r("dist", outDir),
 			lib: {
 				formats: ["iife"],
 				entry: r("src/background/background.ts"),

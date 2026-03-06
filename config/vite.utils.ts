@@ -1,7 +1,8 @@
-import { dev_version, displayName as name, version as packagedVersion } from "./package.json";
+import { dev_version, displayName as name, version as packagedVersion } from "../package.json";
 import path from "path";
 
-export const r = (...args: string[]) => path.resolve(__dirname, ...args);
+export const repoRoot = path.resolve(__dirname, "..");
+export const r = (...args: string[]) => path.resolve(repoRoot, ...args);
 
 export const appName = name;
 export const version = packagedVersion;

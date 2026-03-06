@@ -22,13 +22,13 @@ export default defineConfig(() => {
 		mode,
 		resolve: {
 			alias: {
-				"@": path.resolve(__dirname, "src"),
+				"@": r("src"),
 			},
 		},
 		base: isDev ? "http://localhost:4777/" : "./",
 		build: {
 			emptyOutDir: false,
-			outDir: "dist" + "/" + outDir,
+			outDir: r("dist", outDir),
 			lib: {
 				formats: ["iife"],
 				entry: r("src/content/content.ts"),

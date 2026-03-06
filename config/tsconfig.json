@@ -13,19 +13,19 @@
 		"lib": ["ESNext", "DOM", "WebWorker"],
 		"types": ["vite/client", "chrome"],
 		"skipLibCheck": true,
-		"baseUrl": ".",
+		"baseUrl": "..",
 		"paths": {
-			"@/*": ["./src/*"],
-			"CHANGELOG": ["./CHANGELOG.md"]
+			"@/*": ["src/*"],
+			"CHANGELOG": ["config/CHANGELOG.md"]
 		}
 	},
 	"include": [
-		"src/*.ts",
-		"src/**/*.ts",
-		"src/types/*.d.ts",
-		"src/**/*.vue",
-		"manifest.config.ts",
-		"src/site/twitch.tv/modules/**/*.d.ts"
+		"../src/*.ts",
+		"../src/**/*.ts",
+		"../src/types/*.d.ts",
+		"../src/**/*.vue",
+		"./manifest.config.ts",
+		"../src/site/twitch.tv/modules/**/*.d.ts"
 	],
 	"references": [{ "path": "./tsconfig.node.json" }]
 }

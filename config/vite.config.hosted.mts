@@ -21,8 +21,8 @@ export default defineConfig(() => {
 		VITE_APP_CHANGELOG: fs.readFileSync(
 			r(
 				{
-					nightly: "CHANGELOG-nightly.md",
-				}[process.env.BRANCH ?? ""] ?? "CHANGELOG.md",
+					nightly: "config/CHANGELOG-nightly.md",
+				}[process.env.BRANCH ?? ""] ?? "config/CHANGELOG.md",
 			),
 			"utf-8",
 		),
@@ -32,8 +32,8 @@ export default defineConfig(() => {
 		mode,
 		resolve: {
 			alias: {
-				"@": path.resolve(__dirname, "src"),
-				"@locale": path.resolve(__dirname, "locale"),
+				"@": r("src"),
+				"@locale": r("locale"),
 				"vue-i18n": "vue-i18n/dist/vue-i18n.runtime.esm-bundler.js",
 			},
 		},
@@ -43,7 +43,7 @@ export default defineConfig(() => {
 		base: process.env.VITE_APP_HOST + "/",
 		build: {
 			emptyOutDir: true,
-			outDir: "dist-hosted" + "/" + outDir,
+			outDir: r("dist-hosted", outDir),
 			minify: "terser",
 			terserOptions: {
 				mangle: true,
