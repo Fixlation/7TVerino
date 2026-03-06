@@ -5,6 +5,7 @@ import { watchEffect } from "vue";
 import { declareModule } from "@/composable/useModule";
 import { declareConfig } from "@/composable/useSettings";
 import { hiddenElementSettings } from "./hiddenElements";
+import { useFrontPageDisabler } from "./useFrontPageDisabler";
 
 const { markAsReady } = declareModule("hidden-elements", {
 	name: "Hidden Elements",
@@ -16,6 +17,8 @@ watchEffect(() => {
 		document.body.classList.toggle(setting.class, setting.isHidden.value);
 	});
 });
+
+useFrontPageDisabler();
 
 markAsReady();
 </script>
@@ -170,6 +173,12 @@ export const config = [
 		path: ["Site Layout", "Sidebar"],
 		label: "Hide Stories",
 		hint: "If checked, Stories will be hidden from the side bar",
+		defaultValue: false,
+	}),
+	declareConfig("layout.disable_front_page", "TOGGLE", {
+		path: ["7TVFixed", "Front Page"],
+		label: "Disable Front Page",
+		hint: "If checked, the front page hero carousel and featured front page video players will be hidden",
 		defaultValue: false,
 	}),
 ];
@@ -380,6 +389,14 @@ export const config = [
 		display: none !important;
 	}
 	button:has(div[class$="storiesLeftNavSectionCollapsedButton--txKvw"]) {
+		display: none !important;
+	}
+}
+
+.seventv-disable-front-page {
+	div[data-a-target="front-page-carousel"],
+	div[data-a-target="frontpage-headliner-layout"],
+	div[data-a-player-type="frontpage"] {
 		display: none !important;
 	}
 }

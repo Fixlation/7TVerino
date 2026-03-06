@@ -43,6 +43,8 @@
 			v-tooltip="shouldPaint ? `Paint: ${paint!.data.name}` : ''"
 			class="seventv-chat-user-username"
 			@click="handleClick($event)"
+			@mousedown="handleMiddleMouseDown"
+			@auxclick="handleAuxClick"
 		>
 			<span v-cosmetic-paint="shouldPaint ? paint!.id : null">
 				<span v-if="isMention && !hideAt">@</span>
@@ -113,6 +115,7 @@ const cosmetics = useCosmetics(props.user.id);
 const shouldRenderPaint = useConfig<boolean>("vanity.nametag_paints");
 const shouldRender7tvBadges = useConfig<boolean>("vanity.7tv_Badges");
 const betterUserCardEnabled = useConfig<boolean>("chat.user_card");
+const middleClickToProfileEnabled = useConfig<boolean>("chat.middle_click_profile");
 const twitchBadges = ref<TwitchChatBadgeWithData[]>([]);
 const twitchBadgeSets = toRef(properties, "twitchBadgeSets");
 const mentionStyle = useConfig<MentionStyle>("chat.colored_mentions");
@@ -155,6 +158,25 @@ function handleClick(ev: MouseEvent) {
 	}
 
 	showUserCard.value = !showUserCard.value;
+}
+
+function shouldOpenProfileWithMiddleClick(ev: MouseEvent): boolean {
+	return props.clickable && middleClickToProfileEnabled.value && ev.button === 1 && !!props.user.username;
+}
+
+function handleMiddleMouseDown(ev: MouseEvent): void {
+	if (!shouldOpenProfileWithMiddleClick(ev)) return;
+
+	ev.preventDefault();
+}
+
+function handleAuxClick(ev: MouseEvent): void {
+	if (!shouldOpenProfileWithMiddleClick(ev)) return;
+
+	ev.preventDefault();
+	ev.stopPropagation();
+
+	window.open(`https://www.twitch.tv/${props.user.username}`, "_blank", "noopener,noreferrer");
 }
 
 watch(

@@ -306,6 +306,14 @@ function isAutocompleteTrayOpen(): boolean {
 	return !!tray && (tray.type as string) === "autocomplete-tray";
 }
 
+function hasNativeSendTrayOverride(): boolean {
+	const tray = props.instance.component.props?.tray as Twitch.ChatTray | undefined;
+	if (!tray?.sendMessageHandler) return false;
+
+	const trayType = tray.type as string;
+	return trayType !== "autocomplete-tray" && trayType !== "seventv-custom-tray";
+}
+
 function closeAutocompleteTray(): void {
 	if (!isAutocompleteTrayOpen()) return;
 
@@ -319,6 +327,7 @@ function closeAutocompleteTray(): void {
 
 function stripInputEmoteSets(propsValue: unknown): void {
 	if (!propsValue || typeof propsValue !== "object") return;
+	if (hasNativeSendTrayOverride()) return;
 
 	const v = propsValue as { emotes?: Twitch.TwitchEmoteSet[] };
 	if (Array.isArray(v.emotes) && v.emotes.length > 0) {
@@ -328,6 +337,7 @@ function stripInputEmoteSets(propsValue: unknown): void {
 
 function stripProviderEmoteSets(propsValue: unknown): void {
 	if (!propsValue || typeof propsValue !== "object") return;
+	if (hasNativeSendTrayOverride()) return;
 
 	const v = propsValue as { emote?: { emotes?: Twitch.TwitchEmoteSet[] } };
 	if (Array.isArray(v.emote?.emotes) && v.emote.emotes.length > 0) {
@@ -619,6 +629,10 @@ function resetState() {
 
 function onKeyDown(ev: KeyboardEvent) {
 	if (ev.isComposing) return;
+	if (hasNativeSendTrayOverride()) {
+		clearTabCycle();
+		return;
+	}
 
 	const isTypingCharacter = ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
 	if (isTypingCharacter && isSlateSelectionRange()) {
@@ -673,6 +687,10 @@ function handleCapturedKeyDown(ev: KeyboardEvent) {
 	if (ev.isComposing) return;
 
 	if (!isEventFromChatRoot(ev)) return;
+	if (hasNativeSendTrayOverride()) {
+		clearTabCycle();
+		return;
+	}
 
 	const isTypingCharacter = ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
 	if (isTypingCharacter && isSlateSelectionRange()) {
@@ -907,6 +925,13 @@ defineFunctionHook(
 	props.instance.component,
 	"onEditableValueUpdate",
 	function (old, value: string, sendOnUpdate?: boolean, ...args: unknown[]) {
+		if (hasNativeSendTrayOverride()) {
+			awaitingUpdate.value = false;
+			textValue.value = value;
+			clearTabCycle();
+			return old?.call(this, value, sendOnUpdate, ...args);
+		}
+
 		if (forceResetOnNextEditableUpdate.value) {
 			forceResetOnNextEditableUpdate.value = false;
 			awaitingUpdate.value = false;

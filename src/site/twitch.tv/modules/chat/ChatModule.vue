@@ -354,6 +354,12 @@ export const config = [
 		hint: "Show a 'Copy' icon when hovering over a chat message to copy the message",
 		defaultValue: true,
 	}),
+	declareConfig("chat.middle_click_profile", "TOGGLE", {
+		path: ["7TVFixed", "Chat"],
+		label: "Middle Click To Profile",
+		hint: "If enabled, middle mouse button clicking a username in chat opens that user's Twitch channel in a new tab",
+		defaultValue: false,
+	}),
 	declareConfig<boolean>("highlights.basic.mention", "TOGGLE", {
 		path: ["Highlights", "Built-In"],
 		label: "Show Mention Highlights",

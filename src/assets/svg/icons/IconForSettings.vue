@@ -16,6 +16,7 @@ import PuzzlePieceIcon from "./PuzzlePieceIcon.vue";
 import SiteLayoutIcon from "./SiteLayoutIcon.vue";
 import TvIcon from "./TvIcon.vue";
 import YouTubeIcon from "./YouTubeIcon.vue";
+import Logo7TV from "../logos/Logo7TV.vue";
 
 const props = withDefaults(
 	defineProps<{
@@ -37,6 +38,7 @@ const c = {
 	Backup: FileExportIcon,
 	"Paint Tool": IconFillDrip,
 	"Site Layout": SiteLayoutIcon,
+	"7TVFixed": Logo7TV,
 
 	"Enable YouTube": YouTubeIcon,
 }[props.name];

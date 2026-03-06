@@ -498,6 +498,6 @@ onUnmounted(() => {
 
 .side-nav-card__link:hover .seventv-sidebar-inline-details--has-stream .seventv-sidebar-inline-details__track {
 	transform: translateY(calc(-1 * var(--seventv-sidebar-inline-details-height)));
-	transition-delay: 200ms;
+	transition-delay: 0.12s;
 }
 </style>
