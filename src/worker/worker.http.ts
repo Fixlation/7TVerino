@@ -31,6 +31,7 @@ export class WorkerHttp {
 	private lastPresenceAt: Map<string, number> = new Map();
 	private tverinoGlobalBadgeSetsPromise: Promise<Map<string, Map<string, Twitch.ChatBadge>>> | null = null;
 	private tverinoChannelBadgeSetsPromises = new Map<string, Promise<Map<string, Map<string, Twitch.ChatBadge>>>>();
+	private personalEmoteSetLoads = new Map<string, Promise<void>>();
 	static imageFormat: SevenTV.ImageFormat = "WEBP";
 
 	constructor(private driver: WorkerDriver) {
@@ -74,16 +75,28 @@ export class WorkerHttp {
 		driver.addEventListener("request_user_cosmetics", async (ev) => {
 			if (!ev.port) return;
 
-			const cosmeticEvents = await this.API()
-				.seventv.loadUserCosmetics(ev.detail)
-				.catch(() => void 0);
+			const { identifiers, kinds } = ev.detail;
+			const shouldLoadCosmetics = kinds.some((kind) => kind !== "EMOTE_SET");
+			const shouldLoadEmoteSet = kinds.includes("EMOTE_SET");
 
-			if (!cosmeticEvents) {
-				return;
+			if (shouldLoadCosmetics) {
+				const cosmeticEvents = await this.API()
+					.seventv.loadUserCosmetics(identifiers)
+					.catch(() => void 0);
+
+				if (cosmeticEvents) {
+					for (const cosmeticEvent of cosmeticEvents) {
+						this.driver.eventAPI.onDispatch(cosmeticEvent);
+					}
+				}
 			}
 
-			for (const cosmeticEvent of cosmeticEvents) {
-				this.driver.eventAPI.onDispatch(cosmeticEvent);
+			if (shouldLoadEmoteSet) {
+				await Promise.allSettled(
+					identifiers
+						.filter((identifier): identifier is ["id", string] => identifier[0] === "id" && !!identifier[1])
+						.map(([, id]) => this.loadPersonalEmoteSetForUserOnce(ev.port!, id)),
+				);
 			}
 		});
 		driver.addEventListener("tverino_badge_sets_fetch", async (ev) => {
@@ -308,14 +321,34 @@ export class WorkerHttp {
 
 		this.driver.log.debug(`<Net/Http> fetching channel data for #${channel.username}`);
 
+		const existingChannel = await db.channels.where("id").equals(channel.id).first().catch(() => void 0);
+		const existingSetIDs = Array.isArray(existingChannel?.set_ids) ? [...existingChannel.set_ids] : [];
+		const existingSets = existingSetIDs.length
+			? await db.emoteSets.where("id").anyOf(existingSetIDs).toArray().catch(() => [] as SevenTV.EmoteSet[])
+			: [];
+		const staleSetIDsByProvider = new Map<SevenTV.Provider, string[]>();
+		for (const set of existingSets) {
+			if (!set.provider) continue;
+			const provider = set.provider as SevenTV.Provider;
+			if (!["7TV", "FFZ", "BTTV"].includes(provider)) continue;
+
+			const staleSetIDs = staleSetIDsByProvider.get(provider) ?? [];
+			staleSetIDs.push(set.id);
+			staleSetIDsByProvider.set(provider, staleSetIDs);
+		}
+
 		// store the channel into IDB
 		await db.withErrorFallback(
 			db.channels.put({
 				id: channel.id,
 				platform: port.platform as Platform,
-				set_ids: [],
+				set_ids: existingSetIDs,
 			}),
-			() => db.channels.where("id").equals(channel.id).modify(channel),
+			() =>
+				db.channels.where("id").equals(channel.id).modify({
+					platform: port.platform as Platform,
+					set_ids: existingSetIDs,
+				}),
 		);
 
 		// setup fetching promises
@@ -328,7 +361,8 @@ export class WorkerHttp {
 		] as [SevenTV.Provider, () => Promise<SevenTV.EmoteSet>][];
 
 		const onResult = async (set: SevenTV.EmoteSet) => {
-			if (!set || !set.id) return;
+			if (!set || !set.id || !set.provider) return;
+			const provider = set.provider as SevenTV.Provider;
 
 			// store set to DB
 			await db.withErrorFallback(db.emoteSets.put(set), () =>
@@ -341,6 +375,16 @@ export class WorkerHttp {
 				.equals(channel.id)
 				.modify((x) => {
 					if (!Array.isArray(x.set_ids)) x.set_ids = [];
+
+					for (const staleSetID of staleSetIDsByProvider.get(provider) ?? []) {
+						if (staleSetID === set.id) continue;
+						const staleIndex = x.set_ids.indexOf(staleSetID);
+						if (staleIndex !== -1) {
+							x.set_ids.splice(staleIndex, 1);
+						}
+					}
+
+					staleSetIDsByProvider.set(provider, [set.id]);
 					if (!x.set_ids.includes(set.id)) x.set_ids.push(set.id);
 				});
 
@@ -451,6 +495,99 @@ export class WorkerHttp {
 			frankerfacez,
 			betterttv,
 		};
+	}
+
+	private loadPersonalEmoteSetForUserOnce(port: WorkerPort, userID: string): Promise<void> {
+		const key = `${port.platform ?? "UNKNOWN"}:${userID}`;
+		const existing = this.personalEmoteSetLoads.get(key);
+		if (existing) return existing;
+
+		const pendingLoad = this.loadPersonalEmoteSetForUser(port, userID).finally(() => {
+			if (this.personalEmoteSetLoads.get(key) === pendingLoad) {
+				this.personalEmoteSetLoads.delete(key);
+			}
+		});
+
+		this.personalEmoteSetLoads.set(key, pendingLoad);
+		return pendingLoad;
+	}
+
+	private buildPersonalEmoteEntitlementScope(platform: Platform): string {
+		const scopeChannels = new Set<string>();
+
+		for (const targetPort of this.driver.ports.values()) {
+			if (targetPort.platform !== platform) continue;
+			for (const channelID of targetPort.channelIds) {
+				scopeChannels.add(channelID ?? "X");
+			}
+		}
+
+		return Array.from(scopeChannels)
+			.map((channelID) => `${platform}:${channelID}`)
+			.join(",");
+	}
+
+	private async loadPersonalEmoteSetForUser(port: WorkerPort, userID: string): Promise<void> {
+		if (!port.platform) return;
+
+		const user = await this.API()
+			.seventv.loadUserData(port.platform, userID)
+			.catch(() => void 0);
+		if (!user?.emote_sets?.length) return;
+
+		const personalSetIDs = user.emote_sets
+			.filter((set) => BitField(EmoteSetFlags, set.flags ?? 0).has("Personal"))
+			.map((set) => set.id)
+			.filter(Boolean);
+		const existingEntitlements = await db.entitlements
+			.filter((ent) => ent.kind === "EMOTE_SET" && ent.platform_id === userID)
+			.toArray();
+
+		for (const entitlement of existingEntitlements) {
+			if (personalSetIDs.includes(entitlement.ref_id)) continue;
+
+			await db.entitlements.delete(entitlement.id);
+
+			for (const targetPort of this.driver.ports.values()) {
+				if (targetPort.platform !== port.platform) continue;
+
+				targetPort.postMessage("ENTITLEMENT_DELETED", {
+					id: entitlement.id,
+					kind: entitlement.kind,
+					ref_id: entitlement.ref_id,
+					user_id: entitlement.user_id,
+					platform_id: entitlement.platform_id,
+				});
+			}
+		}
+		if (!personalSetIDs.length) return;
+
+		const loadedSets = await Promise.allSettled(personalSetIDs.map((setID) => this.API().seventv.loadEmoteSet(setID)));
+
+		for (const result of loadedSets) {
+			if (result.status !== "fulfilled") continue;
+
+			const set = result.value;
+			await db.withErrorFallback(db.emoteSets.put(set), () => db.emoteSets.where("id").equals(set.id).modify(set));
+
+			const entitlement = {
+				id: `${userID}:EMOTE_SET:${set.id}`,
+				kind: "EMOTE_SET" as const,
+				ref_id: set.id,
+				user_id: user.id,
+				platform_id: userID,
+				scope: this.buildPersonalEmoteEntitlementScope(port.platform),
+			};
+			await db.withErrorFallback(db.entitlements.put(entitlement), () =>
+				db.entitlements.where("id").equals(entitlement.id).modify(entitlement),
+			);
+
+			for (const targetPort of this.driver.ports.values()) {
+				if (targetPort.platform !== port.platform) continue;
+
+				targetPort.postMessage("ENTITLEMENT_CREATED", entitlement);
+			}
+		}
 	}
 }
 

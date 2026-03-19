@@ -47,9 +47,16 @@ export class ChannelContext implements CurrentChannel {
 	setCurrentChannel(channel: CurrentChannel): boolean {
 		// Notify the worker about this new channel we are on
 		if (this.id === channel.id) {
+			const usernameChanged = !!channel.username && channel.username !== this.username;
+			const displayNameChanged = !!channel.displayName && channel.displayName !== this.displayName;
+
 			this.username = channel.username;
 			this.displayName = channel.displayName;
 			this.active = channel.active;
+
+			if (channel.active && (usernameChanged || displayNameChanged || !this.loaded || !this.setsFetched)) {
+				void this.fetch(true);
+			}
 
 			return false;
 		}
@@ -60,11 +67,14 @@ export class ChannelContext implements CurrentChannel {
 		this.username = channel.username;
 		this.displayName = channel.displayName;
 		this.active = channel.active;
+		this.loaded = false;
+		this.setsFetched = false;
+		this.user = undefined;
 
 		m.set(channel.id, this);
 		m.delete(oldID);
 
-		this.fetch();
+		void this.fetch();
 		return true;
 	}
 
@@ -77,12 +87,15 @@ export class ChannelContext implements CurrentChannel {
 	}
 
 	async fetch(refetch = false) {
-		sendMessage("STATE", {
-			channel: toRaw(this.base),
-			refetch: refetch,
-		});
+		if (!this.id) return;
+		const state = fetchState.get(this) ?? { promise: null as Promise<void> | null, id: "" };
+		if (state.promise && state.id === this.id) {
+			return state.promise;
+		}
 
-		await Promise.all([
+		state.id = this.id;
+
+		const request = Promise.all([
 			target.listenUntil("channel_fetched", (ev) => {
 				if (this.id !== ev.detail.id) return false;
 
@@ -95,12 +108,31 @@ export class ChannelContext implements CurrentChannel {
 				this.setsFetched = true;
 				return this.id === ev.detail.id;
 			}),
-		]);
+		])
+			.then(() => void 0)
+			.finally(() => {
+				const nextState = fetchState.get(this);
+				if (nextState?.promise === request) {
+					nextState.promise = null;
+				}
+				fetchState.set(this, nextState ?? state);
+			});
+
+		state.promise = request;
+		fetchState.set(this, state);
+
+		sendMessage("STATE", {
+			channel: toRaw(this.base),
+			refetch: refetch,
+		});
+
+		await request;
 	}
 }
 
 const m = new Map<string, ChannelContext>();
 const initialized = new WeakSet<ChannelContext>();
+const fetchState = new WeakMap<ChannelContext, { promise: Promise<void> | null; id: string }>();
 
 function initializeChannelContext(ctx: ChannelContext): ChannelContext {
 	if (initialized.has(ctx)) return ctx;

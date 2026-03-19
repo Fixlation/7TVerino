@@ -3,8 +3,9 @@
 		<button
 			v-for="btn of buttons"
 			:key="btn.label"
+			type="button"
 			:selected="activeTab === btn.id"
-			@click="emit('switch', btn.id)"
+			@click.stop="emit('switch', btn.id)"
 		>
 			{{ formatCount(btn.count, btn.maxCount) }}
 			<p>{{ btn.label }}</p>

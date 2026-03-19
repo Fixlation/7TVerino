@@ -41,7 +41,8 @@
 			:source-data="msg.sourceData"
 			:badges="msg.badges"
 			:badge-data="msg.badgeData"
-			:msg-id="msg.sym"
+			:msg-id="disableUserCard ? undefined : msg.sym"
+			:clickable="!disableUserCard"
 			@open-native-card="openViewerCard($event, msg.author.username, msg.id)"
 		/>
 
@@ -135,6 +136,7 @@ const props = withDefaults(
 		forceTimestamp?: boolean;
 		hydrated?: boolean;
 		showRichEmbeds?: boolean;
+		disableUserCard?: boolean;
 	}>(),
 	{ as: "Chat", hydrated: true, showRichEmbeds: true },
 );

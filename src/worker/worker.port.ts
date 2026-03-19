@@ -15,7 +15,7 @@ export class WorkerPort {
 	identity: TwitchIdentity | YouTubeIdentity | null = null;
 	user: SevenTV.User | null = null;
 	imageFormat: SevenTV.ImageFormat | null = null;
-	tverinoChannelIDs = new Set<string>();
+	tverinoChannelIDs = new Map<string, number>();
 
 	constructor(
 		private driver: WorkerDriver,
@@ -98,7 +98,7 @@ export class WorkerPort {
 				if (!Array.isArray(identifiers) || !this.platform || !kinds.length) break;
 
 				log.debugWithObjects(["Requesting cosmetics"], [identifiers, kinds]);
-				this.driver.emit("request_user_cosmetics", identifiers, this);
+				this.driver.emit("request_user_cosmetics", { identifiers, kinds }, this);
 				break;
 			}
 			case "PROCESS_CHAT_MESSAGE": {
@@ -152,8 +152,10 @@ export class WorkerPort {
 				break;
 			}
 			case "CLOSE":
-				for (const channelID of this.tverinoChannelIDs) {
-					this.driver.emit("tverino_chat_unsubscribe", { channelID }, this);
+				for (const [channelID, count] of this.tverinoChannelIDs) {
+					for (let i = 0; i < count; i += 1) {
+						this.driver.emit("tverino_chat_unsubscribe", { channelID }, this);
+					}
 				}
 				this.tverinoChannelIDs.clear();
 

@@ -1,6 +1,6 @@
 <template>
 	<main class="seventv-user-card-container">
-		<div ref="cardRef" class="seventv-user-card">
+		<div ref="cardRef" class="seventv-user-card" @pointerdown.stop @mousedown.stop @click.stop>
 			<div class="seventv-user-card-header">
 				<!--Identity (avatar, nametag, badges) -->
 				<div ref="dragHandle" class="seventv-user-card-identity">

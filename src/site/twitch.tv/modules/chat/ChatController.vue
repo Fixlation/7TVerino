@@ -5,8 +5,10 @@
 			v-if="tverinoEnabled"
 			:header-container="headerContainerEl"
 			:input-container="inputContainerEl"
+			:active-target="tverinoActiveTarget"
 			:native-input-status="nativeTVerinoInputStatus"
 			:native-send-message="sendNativeTVerinoMessage"
+			:set-active-target="setTVerinoActiveTarget"
 			:current-ctx="ctx"
 			:list="list"
 			:restrictions="restrictions"
@@ -71,8 +73,9 @@ import {
 	formatTimeoutNotice,
 	parseTimeoutDuration,
 } from "@/common/chat/timeoutPresets";
-import { ChannelContext, ChannelRole, useChannelContext } from "@/composable/channel/useChannelContext";
+import { ChannelContext, ChannelRole, resolveChannelContext, useChannelContext } from "@/composable/channel/useChannelContext";
 import { useChatEmotes } from "@/composable/chat/useChatEmotes";
+import { useChatMessageProcessor } from "@/composable/chat/useChatMessageProcessor";
 import { useChatMessages } from "@/composable/chat/useChatMessages";
 import { useChatProperties } from "@/composable/chat/useChatProperties";
 import { useChatScroller } from "@/composable/chat/useChatScroller";
@@ -155,15 +158,23 @@ const personalTimeouts = usePersonalTimeouts();
 const recentSentEmotes = useRecentSentEmotes();
 const properties = useChatProperties(ctx);
 const tools = useChatTools(ctx);
+const sharedChatDataByChannelID = ref<Map<string, Twitch.SharedChat> | null>(null);
+const processor = useChatMessageProcessor(ctx, {
+	sharedChatData: sharedChatDataByChannelID,
+});
 const personalTimeoutMiddlewareKey = `personal-timeout:${ctx.id}`;
 const tverinoEnabled = useConfig<boolean>("chat.tverino.enabled", true);
-const tverinoActiveTarget = useConfig<SevenTV.TVerinoActiveTarget>("chat.tverino.active_target", {
+const tverinoActiveTarget = ref<SevenTV.TVerinoActiveTarget>({
 	kind: "native",
 	id: "",
 	login: "",
 	displayName: "",
 });
 const forceStandardHydration = ref(!tverinoEnabled.value);
+
+function setTVerinoActiveTarget(nextTarget: SevenTV.TVerinoActiveTarget): void {
+	tverinoActiveTarget.value = nextTarget;
+}
 const nativeTVerinoInputStatus = computed<SevenTV.TVerinoTransportStatus>(() => {
 	const chatProps = controller.value?.component?.props;
 	const sendMessage = chatProps?.chatConnectionAPI?.sendMessage;
@@ -840,11 +851,19 @@ definePropertyHook(controller.value.component, "props", {
 				) {
 					const nonce = `tverino:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 					const pending = createTVerinoLocalMessage(activeTarget, nextMessage, nonce);
+					const activeTargetCtx = resolveChannelContext(activeTarget.id);
+					activeTargetCtx.setCurrentChannel({
+						id: activeTarget.id,
+						username: activeTarget.login,
+						displayName: activeTarget.displayName,
+						active: true,
+					});
+					const activeTargetEmotes = useChatEmotes(activeTargetCtx);
 					if (pending) {
 						emitTVerinoLocalMessage(activeTarget.id, pending);
 					}
 
-					recentSentEmotes.recordMessage(activeTarget.id, nextMessage, emotes.active);
+					recentSentEmotes.recordMessage(activeTarget.id, nextMessage, activeTargetEmotes.active);
 					sendTVerinoChatMessage(activeTarget.id, activeTarget.login, nextMessage, nonce);
 					return Promise.resolve(undefined);
 				}
@@ -863,7 +882,6 @@ definePropertyHook(controller.value.component, "props", {
 	},
 });
 
-const sharedChatDataByChannelID = ref<Map<string, Twitch.SharedChat> | null>(null);
 watch(
 	presentation,
 	(inst, old) => {
@@ -954,7 +972,7 @@ function handleBuffer(buffer: Twitch.MessageBufferComponent["buffer"]) {
 		// If the message is historical we add it to the array and continue
 		if ((msg as Twitch.ChatMessage).isHistorical || msg.type === MessageType.CONNECTED) {
 			m.historical = true;
-			chatList.value?.onChatMessage(m, msg as Twitch.ChatMessage, false);
+			processor.onChatMessage(m, msg as Twitch.ChatMessage, false);
 
 			historical.push(m);
 			continue;
@@ -1005,6 +1023,21 @@ watch(
 		scroller.unpause();
 
 		nextTick(emotes.reset);
+	},
+	{ immediate: true },
+);
+
+watch(
+	[tverinoEnabled, currentChannel] as const,
+	([enabled, channel]) => {
+		if (enabled || !channel?.id) return;
+
+		setTVerinoActiveTarget({
+			kind: "native",
+			id: channel.id,
+			login: channel.username ?? "",
+			displayName: channel.displayName ?? channel.username ?? "",
+		});
 	},
 	{ immediate: true },
 );

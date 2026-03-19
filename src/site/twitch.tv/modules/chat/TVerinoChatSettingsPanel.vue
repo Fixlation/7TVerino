@@ -61,49 +61,6 @@
 				</div>
 			</section>
 
-			<section class="panel-section">
-				<header class="panel-section-title">Global Badge</header>
-				<p class="panel-section-description">
-					Choose the Twitch global badge used for your identity in this chat.
-				</p>
-
-				<p v-if="globalBadgeNotice" class="panel-feedback" :class="{ error: globalBadgeNoticeIsError }">
-					{{ globalBadgeNotice }}
-				</p>
-
-				<div v-if="globalBadgeOptions.length" class="panel-badge-list">
-					<button
-						v-for="badge of globalBadgeOptions"
-						:key="badge.key"
-						class="panel-badge-option"
-						:class="{ selected: selectedGlobalBadgeKeys.includes(badge.key) }"
-						type="button"
-						:disabled="isSelectingBadge"
-						@click="selectBadgeOption(badge)"
-					>
-						<span class="panel-badge-main">
-							<img class="panel-badge-image" :src="badge.image2x || badge.image1x" :alt="badge.title" />
-							<span class="panel-badge-copy">
-								<span class="panel-badge-title">{{ badge.title }}</span>
-								<span class="panel-badge-meta">{{ badge.setID }}</span>
-							</span>
-						</span>
-						<span class="panel-badge-state">
-							{{
-								selectingBadgeKey === badge.key
-									? "Saving..."
-									: selectedGlobalBadgeKeys.includes(badge.key)
-									  ? "Selected"
-									  : ""
-							}}
-						</span>
-					</button>
-				</div>
-
-				<p v-else class="panel-empty">
-					{{ globalBadgeEmptyText }}
-				</p>
-			</section>
 		</div>
 	</UiFloating>
 </template>
@@ -112,7 +69,6 @@
 import { computed } from "vue";
 import type { ChannelContext } from "@/composable/channel/useChannelContext";
 import { useConfig } from "@/composable/useSettings";
-import { useTVerinoGlobalBadges } from "./useTVerinoGlobalBadges";
 import UiFloating from "@/ui/UiFloating.vue";
 import { offset, shift } from "@floating-ui/dom";
 
@@ -162,16 +118,6 @@ const deletedMessages = useConfig<DeletedMessageMode>("chat.deleted_messages", 1
 const displaySeconds = useConfig<boolean>("chat.timestamp_with_seconds", false);
 const timestampFormat = useConfig<TimestampFormatKey>("chat.timestamp_format", "infer");
 const mentionStyle = useConfig<MentionStyle>("chat.colored_mentions", 1);
-const {
-	globalBadgeOptions,
-	globalBadgeNotice,
-	globalBadgeNoticeIsError,
-	globalBadgeEmptyText,
-	isSelectingBadge,
-	selectedGlobalBadgeKeys,
-	selectBadgeOption,
-	selectingBadgeKey,
-} = useTVerinoGlobalBadges(props.ctx);
 
 const channelLabel = computed(() => props.ctx.displayName || props.ctx.username || "Channel");
 const showModeratorSection = computed(

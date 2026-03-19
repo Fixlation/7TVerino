@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from "vue";
 import { HookedInstance, useComponentHook } from "@/common/ReactHooks";
+import { resolveChannelContext } from "@/composable/channel/useChannelContext";
 import { declareModule } from "@/composable/useModule";
 import { declareConfig } from "@/composable/useSettings";
 import EmoteMenu from "./EmoteMenu.vue";
@@ -21,6 +22,15 @@ const { markAsReady } = declareModule("emote-menu", {
 const buttonEl = ref<HTMLButtonElement | undefined>();
 const shouldMount = reactive(new WeakMap<HookedInstance<Twitch.ChatInputController>, boolean>());
 const placement = useConfig<"regular" | "below" | "hidden">("ui.emote_menu.button_placement");
+const tverinoEnabled = useConfig<boolean>("chat.tverino.enabled", true);
+
+function formatSendMessagePlaceholder(channelID: string | undefined, placeholder: string): string {
+	if (!tverinoEnabled.value) return placeholder;
+	if (placeholder !== "Send a message" || !channelID) return placeholder;
+
+	const displayName = resolveChannelContext(channelID).displayName.trim();
+	return displayName ? `${placeholder} in ${displayName}` : placeholder;
+}
 
 const chatInputController = useComponentHook<Twitch.ChatInputController>(
 	{
@@ -42,9 +52,8 @@ const chatInputController = useComponentHook<Twitch.ChatInputController>(
 		functionHooks: {
 			getSendMessagePlaceholder(this, old) {
 				const tray = this.props.activeTray;
-
-				if (!tray) return old.call(this);
-				return tray.placeholder ?? old.call(this);
+				const placeholder = tray?.placeholder ?? old.call(this);
+				return formatSendMessagePlaceholder(this.props.channelID, placeholder);
 			},
 		},
 	},

@@ -103,7 +103,7 @@ export type TypedWorkerMessage<T extends WorkerMessageType> = {
 	SYNC_TWITCH_SET: Either<{ input: Twitch.TwitchEmoteSet }, { out: SevenTV.EmoteSet }>;
 	REQUEST_USER_COSMETICS: {
 		identifiers: ["id" | "username", string][];
-		kinds: SevenTV.CosmeticKind[];
+		kinds: Array<SevenTV.CosmeticKind | "EMOTE_SET">;
 	};
 	PROCESS_CHAT_MESSAGE: {
 		requestID: string;
@@ -122,6 +122,7 @@ export type TypedWorkerMessage<T extends WorkerMessageType> = {
 	};
 	TVERINO_CHAT_SUBSCRIBE: {
 		channel: CurrentChannel;
+		includeRecentHistory?: boolean;
 	};
 	TVERINO_CHAT_UNSUBSCRIBE: {
 		channelID: string;

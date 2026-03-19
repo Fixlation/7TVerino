@@ -166,7 +166,7 @@ type WorkerTypedEvent<EVN extends WorkerEventName> = {
 	channel_data_fetched: CurrentChannel;
 	identity_updated: TwitchIdentity | YouTubeIdentity;
 	user_updated: SevenTV.User;
-	request_user_cosmetics: ["id" | "username", string][];
+	request_user_cosmetics: TypedWorkerMessage<"REQUEST_USER_COSMETICS">;
 	imageformat_updated: string;
 	tverino_chat_auth: {
 		login: string;

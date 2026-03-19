@@ -108,6 +108,7 @@
 			v-if="brandButtonRef"
 			:anchor-el="brandButtonRef"
 			:channel-id="props.ctx.id"
+			:channel-ctx="props.ctx"
 			width="39rem"
 			scale="1.2rem"
 			@emote-click="onEmoteMenuEmoteClick"
@@ -299,9 +300,11 @@ import { ChatMessage } from "@/common/chat/ChatMessage";
 import { type HookedInstance, useComponentHook } from "@/common/ReactHooks";
 import { type ChannelContext } from "@/composable/channel/useChannelContext";
 import { useChatEmotes } from "@/composable/chat/useChatEmotes";
+import { useAuthorEmoteSetRequests } from "@/composable/chat/useAuthorEmoteSetRequests";
 import { useChatMessageProcessor } from "@/composable/chat/useChatMessageProcessor";
 import { useChatMessages } from "@/composable/chat/useChatMessages";
 import { type RecentSentEmoteEntry, useRecentSentEmotes } from "@/composable/chat/useRecentSentEmotes";
+import { useCosmetics } from "@/composable/useCosmetics";
 import { useConfig } from "@/composable/useSettings";
 import { MessagePartType, MessageType } from "@/site/twitch.tv";
 import TwitchChannelPointsIcon from "@/assets/svg/icons/TwitchChannelPointsIcon.vue";
@@ -349,6 +352,7 @@ const AUTOCOMPLETION_MODE = {
 	ALWAYS_ON: 2,
 } as const;
 const TAB_AROUND_MATCH_COUNT = 3;
+const MESSAGE_HISTORY_LIMIT = 20;
 
 const props = defineProps<{
 	ctx: ChannelContext;
@@ -370,6 +374,18 @@ const tabCompletionMode = useConfig<number>("chat_input.autocomplete.carousel.mo
 const shouldAutocompleteChatters = useConfig<boolean>("chat_input.autocomplete.chatters", true);
 const shouldAutocompleteEmoji = useConfig<boolean>("chat_input.autocomplete.colon.emoji", false);
 const autoClaimChannelPoints = useConfig<boolean>("general.autoclaim.channel_points", false);
+const actorCosmetics = computed(() => (identity.value?.id ? useCosmetics(identity.value.id) : null));
+
+function refreshMessagesForAuthor(userID: string): void {
+	const authoredMessages = messages.find((message) => message.author?.id === userID, true) as ChatMessage[];
+	for (const message of authoredMessages) {
+		message.refresh();
+	}
+}
+
+const actorEmoteSetRequests = useAuthorEmoteSetRequests({
+	onResolved: refreshMessagesForAuthor,
+});
 const processor = useChatMessageProcessor(props.ctx);
 const settingsMenu = useSettingsMenu();
 const emoteMenuCtx = useEmoteMenuContext();
@@ -385,6 +401,9 @@ const value = ref("");
 const isFocused = ref(false);
 const suggestionIndex = ref(0);
 const tabState = ref<TabCycleState | null>(null);
+const messageHistory = ref<string[]>([]);
+const messageHistoryIndex = ref(-1);
+const messageHistoryDraft = ref<string | null>(null);
 const badgeTriggerIndex = ref(0);
 const channelPointsPanelOpen = ref(false);
 const badgePanelOpen = ref(false);
@@ -403,6 +422,7 @@ let nativeClaimPointsGainTimeout = 0;
 let nativeClaimRequestToken = 0;
 let nativeClaimStartBalance: number | null = null;
 let nativeClaimAutoTriggered = false;
+let syncingMessageHistoryValue = false;
 const {
 	channelPointsBalance,
 	channelPointsBalanceCompact,
@@ -475,7 +495,9 @@ const actorDisplayName = computed(() => {
 });
 const placeholder = computed(() => {
 	if (props.inputStatus.state !== "connected") return "Chat unavailable";
-	return "Send a message";
+
+	const channelLabel = (props.ctx.displayName || props.ctx.username).trim();
+	return channelLabel ? `Send a message in ${channelLabel}` : "Send a message";
 });
 
 const canSend = computed(() => props.inputStatus.state === "connected" && value.value.trim().length > 0);
@@ -813,6 +835,63 @@ function clearTabCycle(): void {
 	tabState.value = null;
 }
 
+function resetMessageHistoryNavigation(): void {
+	messageHistoryIndex.value = -1;
+	messageHistoryDraft.value = null;
+}
+
+function pushMessageHistory(message: string): void {
+	messageHistory.value.unshift(message);
+	messageHistory.value.splice(MESSAGE_HISTORY_LIMIT, Infinity);
+	resetMessageHistoryNavigation();
+}
+
+function setValueFromMessageHistory(nextValue: string): void {
+	syncingMessageHistoryValue = true;
+	value.value = nextValue;
+	suggestionIndex.value = 0;
+	clearTabCycle();
+	queueMicrotask(() => {
+		syncingMessageHistoryValue = false;
+	});
+
+	requestAnimationFrame(() => {
+		const input = inputRef.value;
+		const pos = nextValue.length;
+
+		input?.focus();
+		input?.setSelectionRange(pos, pos);
+	});
+}
+
+function useMessageHistory(backwards = true): boolean {
+	const input = inputRef.value;
+	if (!input || messageHistory.value.length === 0) return false;
+	if (suggestionItems.value.length && !tabState.value && messageHistoryIndex.value === -1) return false;
+
+	const selectionStart = input.selectionStart ?? value.value.length;
+	const selectionEnd = input.selectionEnd ?? selectionStart;
+	if (selectionStart !== selectionEnd) return false;
+
+	if (messageHistoryIndex.value === -1) {
+		if (backwards) {
+			if (selectionStart !== 0) return false;
+		} else if (selectionStart !== value.value.length) {
+			return false;
+		}
+
+		messageHistoryDraft.value = value.value;
+	}
+
+	const nextIndex = backwards ? messageHistoryIndex.value + 1 : messageHistoryIndex.value - 1;
+	if (nextIndex < -1 || nextIndex >= messageHistory.value.length) return false;
+
+	const nextValue = nextIndex === -1 ? (messageHistoryDraft.value ?? "") : messageHistory.value[nextIndex];
+	setValueFromMessageHistory(nextValue);
+	messageHistoryIndex.value = nextIndex;
+	return true;
+}
+
 function normalizeTabMatchToken(token: string): string {
 	return token.trimEnd();
 }
@@ -822,7 +901,7 @@ function findMatchingTokens(search: string, mode: "tab" | "colon", limit?: numbe
 	if (!normalizedSearch) return [];
 
 	autocompleteIndex.rebuild({
-		personalEmotes: {},
+		personalEmotes: actorCosmetics.value?.emotes ?? {},
 		activeEmotes: emotes.active,
 		providers: emotes.providers,
 		emojis: emotes.emojis,
@@ -842,6 +921,26 @@ function findMatchingTokens(search: string, mode: "tab" | "colon", limit?: numbe
 
 	return matches.filter((item) => item.item?.provider !== "EMOJI");
 }
+
+watch(
+	() => identity.value,
+	(currentIdentity) => {
+		if (!currentIdentity) return;
+		const displayName = "displayName" in currentIdentity ? currentIdentity.displayName : currentIdentity.username;
+
+		actorEmoteSetRequests.requestAuthorCosmetics({
+			color: "",
+			isIntl: false,
+			isSubscriber: false,
+			userDisplayName: displayName,
+			displayName,
+			userID: currentIdentity.id,
+			userLogin: currentIdentity.username,
+			userType: "",
+		});
+	},
+	{ immediate: true },
+);
 
 function buildTabState(matches: TabToken[], index: number): TabCycleState {
 	const currentMatch = matches[index]!;
@@ -1069,6 +1168,12 @@ function stopBadgeTriggerAnimation(): void {
 }
 
 function onKeyDown(ev: KeyboardEvent): void {
+	if (ev.key === "Escape" && activeReply.value) {
+		ev.preventDefault();
+		closeNativeReplyTray();
+		return;
+	}
+
 	if (tabState.value && shouldListenToCarouselArrowKeys.value) {
 		if (ev.key === "ArrowLeft") {
 			handleTabPress(ev, true);
@@ -1088,6 +1193,18 @@ function onKeyDown(ev: KeyboardEvent): void {
 
 	if ((ev.key === " " || ev.code === "Space") && commitTabCycleSpace(ev)) {
 		return;
+	}
+
+	if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey) {
+		if (ev.key === "ArrowUp" && useMessageHistory(true)) {
+			ev.preventDefault();
+			return;
+		}
+
+		if (ev.key === "ArrowDown" && useMessageHistory(false)) {
+			ev.preventDefault();
+			return;
+		}
 	}
 
 	if (suggestionItems.value.length && !tabState.value) {
@@ -1156,6 +1273,7 @@ function submit(explicitText?: string): void {
 		const didSend = props.nativeSendMessage?.(message, replyMetadata) ?? false;
 		if (!didSend) return;
 
+		pushMessageHistory(message);
 		closeNativeReplyTray();
 		value.value = "";
 		suggestionIndex.value = 0;
@@ -1232,6 +1350,7 @@ function submit(explicitText?: string): void {
 
 	recentSentEmotes.recordMessage(props.ctx.id, message, emotes.active);
 	sendChatMessage(props.ctx.id, props.ctx.username, message, nonce, replyMetadata);
+	pushMessageHistory(message);
 	closeNativeReplyTray();
 	value.value = "";
 	suggestionIndex.value = 0;
@@ -1381,6 +1500,11 @@ watch(
 watch(activeReply, (tray) => {
 	if (!tray) return;
 	requestAnimationFrame(() => inputRef.value?.focus());
+});
+
+watch(value, () => {
+	if (syncingMessageHistoryValue || messageHistoryIndex.value === -1) return;
+	resetMessageHistoryNavigation();
 });
 
 watch(channelPointsBalance, (nextBalance) => {

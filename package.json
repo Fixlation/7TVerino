@@ -3,6 +3,7 @@
 	"displayName": "7TVerino",
 	"description": "Unofficial 7TV fork focused on performance and QoL.",
 	"private": true,
+	"license": "SEE LICENSE IN LICENSE.md",
 	"version": "3.1.16",
 	"dev_version": "2.0",
 	"scripts": {

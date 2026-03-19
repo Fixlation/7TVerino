@@ -1,5 +1,16 @@
 # Patch Notes
 
+18/03/2026
+- Improved saving of 7TVerino tabs and recent emotes
+- Fixed a bug causing 1hour chat history to not load
+- Fixed a bug causing the 7TV improved usercard to close when pressing a tab
+- Fixed a bug causing personal 7TV emotes to not load
+- Lead Moderator badge now displays correctly
+- Removed global badge list from native Twitch settings
+- Added arrow use to browse message history within chat
+- Pressing Esc when replying now cancels the reply
+- Added respective channel username to the chatbox
+
 16/03/2026 - Extension overhaul
 - Renamed 7TVFixed to 7TVerino
 - Overhauled 7TVerino chat, enabled by default and no longer in Beta

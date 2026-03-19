@@ -46,6 +46,7 @@
 				class="seventv-emote-menu-body"
 			>
 				<EmoteMenuTab
+					:channel-ctx="props.channelCtx"
 					:channel-id="props.channelId ?? ctx.channelID"
 					:provider="key"
 					:selected="key === activeProvider"
@@ -60,10 +61,10 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch, watchEffect } from "vue";
+import { provide, reactive, ref, watch, watchEffect } from "vue";
 import { onClickOutside, onKeyStroke, useEventListener, useKeyModifier } from "@vueuse/core";
 import { useStore } from "@/store/main";
-import { useChannelContext } from "@/composable/channel/useChannelContext";
+import { CHANNEL_CTX, type ChannelContext, useChannelContext } from "@/composable/channel/useChannelContext";
 import { useConfig } from "@/composable/useSettings";
 import SearchIcon from "@/assets/svg/icons/SearchIcon.vue";
 import StarIcon from "@/assets/svg/icons/StarIcon.vue";
@@ -81,6 +82,7 @@ const props = defineProps<{
 	width?: string;
 	scale?: string;
 	channelId?: string;
+	channelCtx?: ChannelContext;
 }>();
 
 const emit = defineEmits<{
@@ -91,8 +93,24 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | undefined>();
 
-const channelCtx = useChannelContext();
+const inheritedChannelCtx = useChannelContext();
+const channelCtx = props.channelCtx ?? inheritedChannelCtx;
+provide(CHANNEL_CTX, channelCtx);
 const ctx = useEmoteMenuContext();
+watch(
+	() => props.channelId,
+	(id) => {
+		if (props.channelCtx || !id || channelCtx.id === id) return;
+
+		channelCtx.setCurrentChannel({
+			id,
+			username: channelCtx.username,
+			displayName: channelCtx.displayName,
+			active: true,
+		});
+	},
+	{ immediate: true },
+);
 watch(
 	() => props.channelId ?? channelCtx.id,
 	(id) => {

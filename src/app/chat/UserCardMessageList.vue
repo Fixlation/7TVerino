@@ -23,6 +23,7 @@
 								:emotes="emotes.active"
 								:hide-mod-icons="true"
 								:force-timestamp="true"
+								:disable-user-card="true"
 							/>
 						</component>
 
@@ -32,6 +33,7 @@
 								:emotes="emotes.active"
 								:hide-mod-icons="true"
 								:force-timestamp="true"
+								:disable-user-card="true"
 							/>
 						</template>
 					</template>

@@ -4,6 +4,7 @@ import type { WorkerPort } from "./worker.port";
 import type { TypedWorkerMessage } from ".";
 
 const TWITCH_IRC_URL = "wss://irc-ws.chat.twitch.tv:443";
+const TWITCH_RECENT_MESSAGES_URL = "https://recent-messages.robotty.de/api/v2/recent-messages";
 const CAPABILITIES = ["twitch.tv/tags", "twitch.tv/commands", "twitch.tv/membership"];
 const PENDING_SEND_TTL_MS = 15000;
 const RECONNECT_DELAY_MS = 2000;
@@ -27,7 +28,9 @@ interface PendingSend {
 
 interface SubscriptionEntry {
 	channel: CurrentChannel;
-	ports: Set<symbol>;
+	ports: Map<symbol, number>;
+	recentHistoryPromise: Promise<void> | null;
+	recentHistoryLoaded: boolean;
 }
 
 interface AuthState {
@@ -63,7 +66,7 @@ export class TVerinoChatTransport {
 
 		driver.addEventListener("tverino_chat_subscribe", (ev) => {
 			if (!ev.port) return;
-			this.subscribe(ev.detail.channel, ev.port);
+			this.subscribe(ev.detail.channel, ev.port, ev.detail.includeRecentHistory);
 		});
 
 		driver.addEventListener("tverino_chat_unsubscribe", (ev) => {
@@ -111,7 +114,7 @@ export class TVerinoChatTransport {
 		this.ensureConnected();
 	}
 
-	private subscribe(channel: CurrentChannel, port: WorkerPort): void {
+	private subscribe(channel: CurrentChannel, port: WorkerPort, includeRecentHistory = false): void {
 		if (!channel.id || !channel.username) return;
 
 		let entry = this.subscriptions.get(channel.id);
@@ -121,7 +124,9 @@ export class TVerinoChatTransport {
 					...channel,
 					username: channel.username.toLowerCase(),
 				},
-				ports: new Set(),
+				ports: new Map(),
+				recentHistoryPromise: null,
+				recentHistoryLoaded: false,
 			};
 			this.subscriptions.set(channel.id, entry);
 		}
@@ -131,11 +136,14 @@ export class TVerinoChatTransport {
 			...channel,
 			username: channel.username.toLowerCase(),
 		};
-		entry.ports.add(port.id);
-		port.tverinoChannelIDs.add(channel.id);
+		entry.ports.set(port.id, (entry.ports.get(port.id) ?? 0) + 1);
+		port.tverinoChannelIDs.set(channel.id, (port.tverinoChannelIDs.get(channel.id) ?? 0) + 1);
 
 		this.broadcastStatus(port);
 		this.ensureConnected();
+		if (includeRecentHistory) {
+			void this.hydrateRecentHistory(entry);
+		}
 
 		if (this.status.state === "connected") {
 			this.joinChannel(entry.channel.username);
@@ -143,12 +151,26 @@ export class TVerinoChatTransport {
 	}
 
 	private unsubscribe(channelID: string, port: WorkerPort): void {
-		port.tverinoChannelIDs.delete(channelID);
+		const portCount = port.tverinoChannelIDs.get(channelID);
+		if (portCount) {
+			if (portCount > 1) {
+				port.tverinoChannelIDs.set(channelID, portCount - 1);
+			} else {
+				port.tverinoChannelIDs.delete(channelID);
+			}
+		}
 
 		const entry = this.subscriptions.get(channelID);
 		if (!entry) return;
 
-		entry.ports.delete(port.id);
+		const entryPortCount = entry.ports.get(port.id);
+		if (entryPortCount) {
+			if (entryPortCount > 1) {
+				entry.ports.set(port.id, entryPortCount - 1);
+			} else {
+				entry.ports.delete(port.id);
+			}
+		}
 		if (entry.ports.size > 0) return;
 
 		this.subscriptions.delete(channelID);
@@ -298,6 +320,7 @@ export class TVerinoChatTransport {
 		const channelLogin = parsed.params[0]?.replace(/^#/, "").toLowerCase();
 		const entry = this.getSubscriptionByLogin(channelLogin);
 		if (!entry) return;
+		const isHistorical = parsed.tags.historical === "1";
 
 		this.prunePendingSends();
 
@@ -307,7 +330,7 @@ export class TVerinoChatTransport {
 		const normalizedMessageBody = messageBody.trim();
 
 		const matchingPending =
-			authorLogin && this.auth && authorLogin === this.auth.login.toLowerCase()
+			!isHistorical && authorLogin && this.auth && authorLogin === this.auth.login.toLowerCase()
 				? this.pendingSends.find(
 						(send) =>
 							send.channelID === entry.channel.id &&
@@ -347,7 +370,7 @@ export class TVerinoChatTransport {
 			deleted: false,
 			banned: false,
 			hidden: false,
-			isHistorical: false,
+			isHistorical,
 			isFirstMsg: parsed.tags["first-msg"] === "1",
 			isReturningChatter: false,
 			isVip: parsed.tags.vip === "1",
@@ -550,6 +573,61 @@ export class TVerinoChatTransport {
 		this.pendingSends = this.pendingSends.filter((send) => send.createdAt >= cutoff);
 	}
 
+	private async hydrateRecentHistory(entry: SubscriptionEntry): Promise<void> {
+		if (entry.recentHistoryLoaded) return;
+		if (entry.recentHistoryPromise) return entry.recentHistoryPromise;
+
+		entry.recentHistoryPromise = this.fetchRecentHistory(entry.channel.username)
+			.then((messages) => {
+				if (this.subscriptions.get(entry.channel.id) !== entry) return;
+				entry.recentHistoryLoaded = true;
+				if (!messages.length) return;
+
+				for (const line of messages) {
+					const parsed = parseIRCMessage(line);
+					if (!parsed) continue;
+
+					switch (parsed.command) {
+						case "PRIVMSG":
+							this.onPrivmsg(parsed);
+							break;
+						case "CLEARMSG":
+							this.onClearMsg(parsed);
+							break;
+						case "CLEARCHAT":
+							this.onClearChat(parsed);
+							break;
+					}
+				}
+
+			})
+			.catch(() => void 0)
+			.finally(() => {
+				if (this.subscriptions.get(entry.channel.id) !== entry) return;
+				entry.recentHistoryPromise = null;
+			});
+
+		return entry.recentHistoryPromise;
+	}
+
+	private async fetchRecentHistory(channelLogin: string): Promise<string[]> {
+		const normalizedLogin = channelLogin.trim().toLowerCase();
+		if (!normalizedLogin) return [];
+
+		const url = new URL(`${TWITCH_RECENT_MESSAGES_URL}/${encodeURIComponent(normalizedLogin)}`);
+		const response = await fetch(url.toString());
+		if (!response.ok) return [];
+
+		const data = (await response.json()) as {
+			messages?: unknown;
+			error?: string | null;
+			error_code?: string | null;
+		};
+		if (data.error || data.error_code || !Array.isArray(data.messages)) return [];
+
+		return data.messages.filter((message): message is string => typeof message === "string" && message.length > 0);
+	}
+
 	private sendRaw(line: string): void {
 		if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
 
@@ -614,7 +692,7 @@ export class TVerinoChatTransport {
 		const entry = this.subscriptions.get(channelID);
 		if (!entry) return;
 
-		for (const portID of entry.ports) {
+		for (const portID of entry.ports.keys()) {
 			const port = this.driver.ports.get(portID);
 			if (!port) continue;
 

@@ -83,11 +83,11 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useStore } from "@/store/main";
 import { debounceFn } from "@/common/Async";
-import { resolveChannelContext } from "@/composable/channel/useChannelContext";
+import { type ChannelContext, resolveChannelContext } from "@/composable/channel/useChannelContext";
 import { useChatEmotes } from "@/composable/chat/useChatEmotes";
 import { useActor } from "@/composable/useActor";
 import { useCosmetics } from "@/composable/useCosmetics";
@@ -106,6 +106,7 @@ const props = defineProps<{
 	provider: EmoteMenuTabName;
 	selected?: boolean;
 	channelId?: string;
+	channelCtx?: ChannelContext;
 }>();
 
 const emit = defineEmits<{
@@ -117,7 +118,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const ctx = useEmoteMenuContext();
-const channelContext = resolveChannelContext(props.channelId ?? ctx.channelID);
+const channelContext = props.channelCtx ?? resolveChannelContext(props.channelId ?? ctx.channelID);
 const emotes = useChatEmotes(channelContext);
 const updater = useUpdater();
 const selectedSet = ref("");
@@ -132,6 +133,21 @@ const sortedSets = ref([] as SevenTV.EmoteSet[]);
 const favorites = useConfig<Set<string>>("ui.emote_menu.favorites");
 // const usage = useConfig<Map<string, number>>("ui.emote_menu.usage");
 // const shouldShowUsage = useConfig<boolean>("ui.emote_menu.most_used");
+const personalSets = computed(() =>
+	Array.from(cosmetics.emoteSets?.values() ?? []).filter((set) => set.provider === props.provider),
+);
+const providerSetSignature = computed(() =>
+	Object.values(sets)
+		.map((set) => `${set.id}:${set.name}:${set.emotes.length}`)
+		.sort()
+		.join("|"),
+);
+const personalSetSignature = computed(() =>
+	personalSets.value
+		.map((set) => `${set.id}:${set.name}:${set.emotes.length}`)
+		.sort()
+		.join("|"),
+);
 
 // Emote icons for groups
 const emojiGroupIcons = ["1f603", "1f44b", "1f343", "1f354", "26bd", "1f698", "1f4a1", "1f523", "1f6a9"];
@@ -223,8 +239,8 @@ function updateVisibility(es: SevenTV.EmoteSet, state: boolean): void {
 
 const filterSets = debounceFn(() => {
 	const ary = Object.values(sets) as SevenTV.EmoteSet[];
-	if (cosmetics.emoteSets?.size) {
-		ary.push(...Array.from(cosmetics.emoteSets.values()).filter((e) => e.provider === props.provider));
+	if (personalSets.value.length) {
+		ary.push(...personalSets.value);
 	}
 
 	if (props.provider === "PLATFORM") {
@@ -249,7 +265,7 @@ const filterSets = debounceFn(() => {
 	sortedSets.value = ary;
 }, 50);
 // Watch for changes to the emote sets and perform sorting operations
-watch(() => [ctx.filter, sets, cosmetics.emoteSets], filterSets, {
+watch(() => [ctx.filter, providerSetSignature.value, personalSetSignature.value], filterSets, {
 	immediate: true,
 });
 </script>

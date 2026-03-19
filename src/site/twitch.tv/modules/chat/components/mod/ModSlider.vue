@@ -73,7 +73,7 @@ const canModerate = computed(() => {
 	const badges = props.msg.badges;
 
 	if (!roles.has("MODERATOR") && !roles.has("BROADCASTER")) return false;
-	if (badges["broadcaster"] || badges["moderator"]) return false;
+	if (badges["broadcaster"] || badges["lead_moderator"] || badges["moderator"]) return false;
 	return true;
 });
 

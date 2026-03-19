@@ -155,11 +155,20 @@ interface RemoteTab extends BaseTab {
 	kind: "remote";
 }
 
+interface TVerinoWorkspaceSessionSnapshot {
+	version: 1;
+	activeTabID?: string;
+	ownerEpoch?: number;
+	workspace: SevenTV.TVerinoSavedTab[];
+}
+
 const props = defineProps<{
+	activeTarget: SevenTV.TVerinoActiveTarget;
 	headerContainer?: HTMLElement | null;
 	inputContainer?: HTMLElement | null;
 	nativeInputStatus: SevenTV.TVerinoTransportStatus;
 	nativeSendMessage: (message: string, reply?: NonNullable<Twitch.DisplayableMessage["reply"]>) => boolean;
+	setActiveTarget: (target: SevenTV.TVerinoActiveTarget) => void;
 	currentCtx: ChannelContext;
 	list: HookedInstance<Twitch.ChatListComponent>;
 	restrictions?: HookedInstance<Twitch.ChatRestrictionsComponent>;
@@ -170,16 +179,11 @@ const currentCtx = props.currentCtx;
 
 const apollo = useApollo();
 const { subscribeChannel, unsubscribeChannel, target, getStatus } = useTVerinoChatTransport();
-const workspace = useConfig<Map<string, SevenTV.TVerinoSavedTab>>("chat.tverino.workspace", new Map());
-const transportStatus = useConfig<SevenTV.TVerinoTransportStatus>("chat.tverino.transport_status", {
+const legacyWorkspace = useConfig<Map<string, SevenTV.TVerinoSavedTab>>("chat.tverino.workspace", new Map());
+const workspace = ref<Map<string, SevenTV.TVerinoSavedTab>>(new Map());
+const transportStatus = ref<SevenTV.TVerinoTransportStatus>({
 	state: "idle",
 	reason: "",
-});
-const activeTarget = useConfig<SevenTV.TVerinoActiveTarget>("chat.tverino.active_target", {
-	kind: "native",
-	id: "",
-	login: "",
-	displayName: "",
 });
 transportStatus.value = getStatus();
 
@@ -227,6 +231,8 @@ let tabLabelMeasureFrame = 0;
 let tabLabelMeasureTimeout = 0;
 let activeTabRevealTimeout = 0;
 const closingTabIDs = ref<Record<string, boolean>>({});
+let hasSessionWorkspaceSnapshot = false;
+const workspaceOwnerEpoch = Date.now() + Math.random();
 
 function isSavedTab(value: unknown): value is SevenTV.TVerinoSavedTab {
 	if (!value || typeof value !== "object") return false;
@@ -260,16 +266,47 @@ function isSameWorkspace(
 	return true;
 }
 
+function stripChannelFromWorkspace(
+	nextWorkspace: Map<string, SevenTV.TVerinoSavedTab>,
+	channelID: string | undefined,
+): Map<string, SevenTV.TVerinoSavedTab> {
+	if (!channelID || !nextWorkspace.has(channelID)) return nextWorkspace;
+
+	const strippedWorkspace = new Map(nextWorkspace);
+	strippedWorkspace.delete(channelID);
+	return strippedWorkspace;
+}
+
 function restoreWorkspaceFromSession(): void {
 	try {
 		const rawWorkspace = window.sessionStorage.getItem(TVERINO_WORKSPACE_SESSION_KEY);
 		if (!rawWorkspace) return;
 
 		const parsed = JSON.parse(rawWorkspace);
-		if (!(parsed instanceof Array)) return;
+		if (parsed instanceof Array) {
+			hasSessionWorkspaceSnapshot = true;
+			const restoredWorkspace = new Map<string, SevenTV.TVerinoSavedTab>();
+			for (const entry of parsed) {
+				if (!isSavedTab(entry)) continue;
+				restoredWorkspace.set(entry.id, {
+					id: entry.id,
+					login: entry.login,
+					displayName: entry.displayName,
+				});
+			}
+
+			const sanitizedWorkspace = stripChannelFromWorkspace(restoredWorkspace, props.currentCtx.id);
+			if (sanitizedWorkspace.size > 0 && !isSameWorkspace(workspace.value, sanitizedWorkspace)) {
+				setWorkspace(sanitizedWorkspace);
+			}
+			return;
+		}
+
+		if (!parsed || typeof parsed !== "object") return;
+		hasSessionWorkspaceSnapshot = true;
 
 		const restoredWorkspace = new Map<string, SevenTV.TVerinoSavedTab>();
-		for (const entry of parsed) {
+		for (const entry of (parsed as Partial<TVerinoWorkspaceSessionSnapshot>).workspace ?? []) {
 			if (!isSavedTab(entry)) continue;
 			restoredWorkspace.set(entry.id, {
 				id: entry.id,
@@ -278,24 +315,62 @@ function restoreWorkspaceFromSession(): void {
 			});
 		}
 
-		if (restoredWorkspace.size > 0 && !isSameWorkspace(workspace.value, restoredWorkspace)) {
-			setWorkspace(restoredWorkspace);
+		const sanitizedWorkspace = stripChannelFromWorkspace(restoredWorkspace, props.currentCtx.id);
+		if (sanitizedWorkspace.size > 0 && !isSameWorkspace(workspace.value, sanitizedWorkspace)) {
+			setWorkspace(sanitizedWorkspace);
 		}
+
 	} catch {
+		hasSessionWorkspaceSnapshot = false;
 		window.sessionStorage.removeItem(TVERINO_WORKSPACE_SESSION_KEY);
 	}
 }
 
-function persistWorkspaceToSession(nextWorkspace: Map<string, SevenTV.TVerinoSavedTab>): void {
+function getPersistedWorkspace(nextWorkspace = workspace.value): Map<string, SevenTV.TVerinoSavedTab> {
+	const persistedWorkspace = stripChannelFromWorkspace(new Map(nextWorkspace), props.currentCtx.id);
+
+	for (const [channelID, isClosing] of Object.entries(closingTabIDs.value)) {
+		if (!isClosing) continue;
+		persistedWorkspace.delete(channelID);
+	}
+
+	return persistedWorkspace;
+}
+
+function getPersistedActiveTabID(nextWorkspace = getPersistedWorkspace()): string {
+	if (activeTabID.value === props.currentCtx.id) return activeTabID.value;
+	if (nextWorkspace.has(activeTabID.value)) return activeTabID.value;
+	return props.currentCtx.id;
+}
+
+function persistWorkspaceToSession(
+	nextWorkspace = getPersistedWorkspace(),
+	nextActiveTabID = getPersistedActiveTabID(nextWorkspace),
+): void {
 	try {
-		if (nextWorkspace.size === 0) {
-			window.sessionStorage.removeItem(TVERINO_WORKSPACE_SESSION_KEY);
-			return;
+		const rawWorkspace = window.sessionStorage.getItem(TVERINO_WORKSPACE_SESSION_KEY);
+		if (rawWorkspace) {
+			const parsed = JSON.parse(rawWorkspace) as Partial<TVerinoWorkspaceSessionSnapshot> | unknown;
+			if (
+				parsed &&
+				typeof parsed === "object" &&
+				typeof (parsed as Partial<TVerinoWorkspaceSessionSnapshot>).ownerEpoch === "number" &&
+				((parsed as Partial<TVerinoWorkspaceSessionSnapshot>).ownerEpoch ?? 0) > workspaceOwnerEpoch
+			) {
+				return;
+			}
 		}
+
+		hasSessionWorkspaceSnapshot = true;
 
 		window.sessionStorage.setItem(
 			TVERINO_WORKSPACE_SESSION_KEY,
-			JSON.stringify(Array.from(nextWorkspace.values())),
+			JSON.stringify({
+				version: 1,
+				activeTabID: nextActiveTabID,
+				ownerEpoch: workspaceOwnerEpoch,
+				workspace: Array.from(nextWorkspace.values()),
+			} satisfies TVerinoWorkspaceSessionSnapshot),
 		);
 	} catch {
 		// Ignore session storage failures and keep the in-memory workspace active.
@@ -303,7 +378,6 @@ function persistWorkspaceToSession(nextWorkspace: Map<string, SevenTV.TVerinoSav
 }
 
 function setWorkspace(nextWorkspace: Map<string, SevenTV.TVerinoSavedTab>): void {
-	persistWorkspaceToSession(nextWorkspace);
 	workspace.value = nextWorkspace;
 }
 
@@ -326,9 +400,33 @@ function resumeTab(channelID: string): void {
 restoreWorkspaceFromSession();
 
 watch(
-	workspace,
+	legacyWorkspace,
 	(nextWorkspace) => {
-		persistWorkspaceToSession(nextWorkspace);
+		if (hasSessionWorkspaceSnapshot || workspace.value.size > 0) return;
+
+		const restoredWorkspace = new Map<string, SevenTV.TVerinoSavedTab>();
+		for (const entry of nextWorkspace.values()) {
+			if (!isSavedTab(entry)) continue;
+			restoredWorkspace.set(entry.id, {
+				id: entry.id,
+				login: entry.login,
+				displayName: entry.displayName,
+			});
+		}
+
+		const sanitizedWorkspace = stripChannelFromWorkspace(restoredWorkspace, props.currentCtx.id);
+		if (!sanitizedWorkspace.size) return;
+		setWorkspace(sanitizedWorkspace);
+		persistWorkspaceToSession(getPersistedWorkspace(sanitizedWorkspace));
+	},
+	{ immediate: true },
+);
+
+watch(
+	[workspace, activeTabID, () => props.currentCtx.id] as const,
+	() => {
+		const persistedWorkspace = getPersistedWorkspace();
+		persistWorkspaceToSession(persistedWorkspace, getPersistedActiveTabID(persistedWorkspace));
 	},
 	{ immediate: true },
 );
@@ -441,12 +539,17 @@ const inlineStatus = computed(() => {
 });
 
 watch(
-	() => currentCtx.id,
-	(nextID, prevID) => {
+	() => [currentCtx.id, currentCtx.username, currentCtx.displayName] as const,
+	([nextID], prev) => {
+		const [prevID] = prev ?? ["", "", ""];
 		currentCtx.remote = false;
 		ensureUnreadWatcher(currentCtx);
 
-		if (!activeTabID.value || activeTabID.value === prevID) {
+		if (prev && nextID !== prevID) {
+			setWorkspace(stripChannelFromWorkspace(workspace.value, prevID));
+		}
+
+		if (!prev || nextID !== prevID || !activeTabID.value) {
 			activeTabID.value = nextID;
 		}
 	},
@@ -473,7 +576,7 @@ watch(
 			if (subscribedRemoteIDs.has(tab.id)) continue;
 
 			subscribedRemoteIDs.add(tab.id);
-			subscribeChannel(tab.ctx.base);
+			subscribeChannel(tab.ctx.base, { includeRecentHistory: true });
 		}
 
 		for (const channelID of Array.from(subscribedRemoteIDs)) {
@@ -533,6 +636,9 @@ function removeTab(channelID: string): void {
 	if (activeTabID.value === channelID) {
 		activeTabID.value = props.currentCtx.id;
 	}
+
+	const persistedWorkspace = getPersistedWorkspace();
+	persistWorkspaceToSession(persistedWorkspace, getPersistedActiveTabID(persistedWorkspace));
 
 	closingTabTimeouts.set(
 		channelID,
@@ -1130,13 +1236,7 @@ async function submitAddChannel(): Promise<void> {
 	}
 
 	if (login === props.currentCtx.username?.toLowerCase()) {
-		const nextWorkspace = new Map(workspace.value);
-		nextWorkspace.set(props.currentCtx.id, {
-			id: props.currentCtx.id,
-			login: props.currentCtx.username?.toLowerCase() ?? login,
-			displayName: props.currentCtx.displayName || props.currentCtx.username || login,
-		});
-		setWorkspace(nextWorkspace);
+		selectTab(props.currentCtx.id);
 		closeAddInput();
 		return;
 	}
@@ -1184,12 +1284,12 @@ target.addEventListener("tverino_chat_status", onTransportStatus);
 watch(
 	activeTab,
 	(tab) => {
-		activeTarget.value = {
+		props.setActiveTarget({
 			kind: tab?.kind ?? "native",
 			id: tab?.id ?? props.currentCtx.id,
 			login: tab?.login ?? props.currentCtx.username ?? "",
 			displayName: tab?.displayName ?? props.currentCtx.displayName ?? props.currentCtx.username ?? "",
-		};
+		});
 
 		void nextTick(() => {
 			revealActiveTab(tab?.id);
@@ -1204,6 +1304,9 @@ watch(
 );
 
 onUnmounted(() => {
+	const persistedWorkspace = getPersistedWorkspace();
+	persistWorkspaceToSession(persistedWorkspace, getPersistedActiveTabID(persistedWorkspace));
+
 	if (nativeSubscriptionChannelID.value) {
 		unsubscribeChannel(nativeSubscriptionChannelID.value);
 	}
@@ -1231,12 +1334,12 @@ onUnmounted(() => {
 	tabLabelAnimations.clear();
 	stopHelixAuthListener();
 	target.removeEventListener("tverino_chat_status", onTransportStatus);
-	activeTarget.value = {
+	props.setActiveTarget({
 		kind: "native",
 		id: props.currentCtx.id,
 		login: props.currentCtx.username ?? "",
 		displayName: props.currentCtx.displayName ?? props.currentCtx.username ?? "",
-	};
+	});
 
 	for (const channelID of Array.from(subscribedRemoteIDs)) {
 		unsubscribeChannel(channelID);

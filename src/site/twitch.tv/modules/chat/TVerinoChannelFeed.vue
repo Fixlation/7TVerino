@@ -145,6 +145,7 @@ function mapDisplayBadgesToRoles(badges: Twitch.ChatBadge[]): Set<ChannelRole> {
 				nextRoles.add("BROADCASTER");
 				nextRoles.add("MODERATOR");
 				break;
+			case "lead_moderator":
 			case "moderator":
 				nextRoles.add("MODERATOR");
 				break;

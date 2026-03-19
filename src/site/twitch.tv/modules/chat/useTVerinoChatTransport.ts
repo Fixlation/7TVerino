@@ -15,7 +15,13 @@ type TVerinoEventPayload<T extends TVerinoEventName> = {
 	tverino_chat_status: TypedWorkerMessage<"TVERINO_CHAT_STATUS">;
 }[T];
 
-const subscriptions = new Map<string, CurrentChannel>();
+interface ChannelSubscriptionEntry {
+	channel: CurrentChannel;
+	count: number;
+	includeRecentHistory: boolean;
+}
+
+const subscriptions = new Map<string, ChannelSubscriptionEntry>();
 
 let status: SevenTV.TVerinoTransportStatus = {
 	state: "idle",
@@ -75,22 +81,48 @@ export function useTVerinoChatTransport() {
 	};
 }
 
-function subscribeChannel(channel: CurrentChannel): void {
+function subscribeChannel(channel: CurrentChannel, options?: { includeRecentHistory?: boolean }): void {
 	if (!channel.id || !channel.username) return;
 
 	const normalized = {
 		...channel,
 		username: channel.username.toLowerCase(),
 	};
+	const includeRecentHistory = !!options?.includeRecentHistory;
 
-	subscriptions.set(channel.id, normalized);
+	const existing = subscriptions.get(channel.id);
+	if (existing) {
+		existing.channel = normalized;
+		existing.count += 1;
+		if (includeRecentHistory && !existing.includeRecentHistory) {
+			existing.includeRecentHistory = true;
+			worker.sendMessage("TVERINO_CHAT_SUBSCRIBE", {
+				channel: normalized,
+				includeRecentHistory: true,
+			});
+		}
+		return;
+	}
+
+	subscriptions.set(channel.id, {
+		channel: normalized,
+		count: 1,
+		includeRecentHistory,
+	});
 	worker.sendMessage("TVERINO_CHAT_SUBSCRIBE", {
 		channel: normalized,
+		includeRecentHistory,
 	});
 }
 
 function unsubscribeChannel(channelID: string): void {
-	if (!subscriptions.has(channelID)) return;
+	const existing = subscriptions.get(channelID);
+	if (!existing) return;
+
+	if (existing.count > 1) {
+		existing.count -= 1;
+		return;
+	}
 
 	subscriptions.delete(channelID);
 	worker.sendMessage("TVERINO_CHAT_UNSUBSCRIBE", {

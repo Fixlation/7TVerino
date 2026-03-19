@@ -3,6 +3,7 @@
 		<EmoteMenu
 			v-if="anchorEl && !tverinoEnabled"
 			:anchor-el="anchorEl"
+			:channel-ctx="channelCtx"
 			width="39rem"
 			scale="1.2rem"
 			:instance="props.instance"

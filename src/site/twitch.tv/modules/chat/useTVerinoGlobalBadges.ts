@@ -42,7 +42,8 @@ const EMPTY_BADGE_SETS: Twitch.BadgeSets = {
 	count: 0,
 };
 const KNOWN_SUBSCRIPTION_BADGE_SET_IDS = new Set(["subscriber", "founder"]);
-const KNOWN_CHANNEL_AUTHORITY_BADGE_SET_IDS = new Set(["broadcaster", "moderator", "vip"]);
+const KNOWN_CHANNEL_AUTHORITY_BADGE_SET_IDS = new Set(["broadcaster", "lead_moderator", "moderator", "vip"]);
+const CHANNEL_AUTHORITY_BADGE_PRIORITY = ["broadcaster", "lead_moderator", "moderator", "vip"] as const;
 const CHANNEL_ROLE_BADGE_PRIORITY: ChannelRole[] = ["BROADCASTER", "MODERATOR", "VIP"];
 const CHANNEL_ROLE_BADGE_SET_BY_ROLE: Record<ChannelRole, string | null> = {
 	BROADCASTER: "broadcaster",
@@ -148,10 +149,8 @@ export function useTVerinoGlobalBadges(ctx: ChannelContext) {
 		() => optimisticSelectedGlobalBadge.value ?? resolvedSelectedGlobalBadge.value,
 	);
 	const selectedChannelRoleBadge = computed<TVerinoGlobalBadgeOption | null>(() => {
-		for (const badge of channelDisplayBadges.value) {
-			if (!isChannelAuthorityBadge(badge)) continue;
-			return toBadgeOption(badge);
-		}
+		const selectedAuthorityBadge = resolvePreferredChannelAuthorityBadge(channelDisplayBadges.value);
+		if (selectedAuthorityBadge) return toBadgeOption(selectedAuthorityBadge);
 
 		const fallbackBadge = resolveActorRoleBadge(ctx.actor.roles, properties.twitchBadgeSets);
 		return fallbackBadge ? toBadgeOption(fallbackBadge) : null;
@@ -600,6 +599,17 @@ function isChannelScopedBadge(
 
 function isChannelAuthorityBadge(badge: Pick<Twitch.ChatBadge, "setID">): boolean {
 	return KNOWN_CHANNEL_AUTHORITY_BADGE_SET_IDS.has(badge.setID.trim().toLowerCase());
+}
+
+function resolvePreferredChannelAuthorityBadge(
+	badges: Array<Pick<Twitch.ChatBadge, "setID"> & Twitch.ChatBadge>,
+): Twitch.ChatBadge | null {
+	for (const setID of CHANNEL_AUTHORITY_BADGE_PRIORITY) {
+		const badge = badges.find((entry) => isChannelAuthorityBadge(entry) && entry.setID.trim().toLowerCase() === setID);
+		if (badge) return badge;
+	}
+
+	return null;
 }
 
 function isSubscriptionBadge(badge: SubscriptionBadgeLike): boolean {
